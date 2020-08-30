@@ -24,3 +24,20 @@ def load_image(image_path):
     img = tf.image.resize(img, (224, 224))
     img = tf.keras.applications.inception_v3.preprocess_input(img)
     return img, image_path
+
+
+class CNN_Encoder(tf.keras.Model):
+    # Since you have already extracted the features and dumped it using pickle
+    # This encoder passes those features through a Fully connected layer
+    def __init__(self, embedding_dim):
+        # print('cnn encoder init')
+        super(CNN_Encoder, self).__init__()
+        # shape after fc == (batch_size, 64, embedding_dim)
+        self.fc = tf.keras.layers.Dense(embedding_dim)
+
+    def call(self, x):
+        x = self.fc(x)
+        x = tf.nn.relu(x)
+        return x
+
+encoder = CNN_Encoder(embedding_dim)
