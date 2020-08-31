@@ -212,3 +212,46 @@ for epoch in range(EPOCHS):
                                          total_loss/num_steps))
     print ('Time taken for 1 epoch {} sec\n'.format(time.time() - start))
 
+fig = plt.figure()
+ax = fig.add_subplot(111)
+plt.plot(loss_plot)
+plt.xlabel('Epochs')
+plt.ylabel('Loss')
+plt.title('Loss Plot', color='white')
+ax.xaxis.label.set_color('white')
+ax.yaxis.label.set_color('white')
+plt.show()
+
+def evaluate(image):
+    attention_plot = np.zeros((max_length, attention_features_shape))
+
+    hidden = decoder.reset_state(batch_size=1)
+
+    temp_input = tf.expand_dims(load_image(image)[0], 0)
+    img_tensor_val = image_features_extract_model(temp_input)
+    img_tensor_val = tf.reshape(img_tensor_val, (img_tensor_val.shape[0], -1, img_tensor_val.shape[3]))
+
+    features = encoder(img_tensor_val)
+
+    dec_input = tf.expand_dims([tokenizer.word_index['<start>']], 0)
+    result = []
+
+    for i in range(max_length):
+        predictions, hidden = decoder(dec_input, features, hidden)
+
+        predicted_id = tf.random.categorical(predictions, 1)[0][0].numpy()
+        result.append(tokenizer.index_word[predicted_id])
+
+        if tokenizer.index_word[predicted_id] == '<end>':
+            return result, attention_plot
+
+        dec_input = tf.expand_dims([predicted_id], 0)
+
+    return result
+
+results = list()
+image = '/content/drive/My Drive/Test/kid.png'
+result = evaluate(image)
+result.remove('<end>')
+print ('Prediction Caption:', ' '.join(result))
+Image.open(image)
