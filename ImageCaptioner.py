@@ -1,7 +1,14 @@
 import tensorflow as tf
 import pandas as pd
-import os
+import os, time
 from PIL import Image
+from tqdm.notebook import tqdm
+from sklearn.model_selection import train_test_split
+from sklearn.utils import shuffle
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+import pickle
+import numpy as np
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -85,6 +92,33 @@ dataset = dataset.map(lambda item1, item2: tf.numpy_function(
 dataset = dataset.shuffle(BUFFER_SIZE).batch(BATCH_SIZE)
 dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
+class BahdanauAttention(tf.keras.Model):
+  def __init__(self, units):
+    super(BahdanauAttention, self).__init__()
+    self.W1 = tf.keras.layers.Dense(units)
+    self.W2 = tf.keras.layers.Dense(units)
+    self.V = tf.keras.layers.Dense(1)
+
+  def call(self, features, hidden):
+    # features(CNN_encoder output) shape == (batch_size, 64, embedding_dim)
+
+    # hidden shape == (batch_size, hidden_size)
+    # hidden_with_time_axis shape == (batch_size, 1, hidden_size)
+    hidden_with_time_axis = tf.expand_dims(hidden, 1)
+
+    # score shape == (batch_size, 64, hidden_size)
+    score = tf.nn.tanh(self.W1(features) + self.W2(hidden_with_time_axis))
+
+    # attention_weights shape == (batch_size, 64, 1)
+    # you get 1 at the last axis because you are applying score to self.V
+    attention_weights = tf.nn.softmax(self.V(score), axis=1)
+
+    # context_vector shape after sum == (batch_size, hidden_size)
+    context_vector = attention_weights * features
+    context_vector = tf.reduce_sum(context_vector, axis=1)
+
+    return context_vector, attention_weights
+
 
 class CNN_Encoder(tf.keras.Model):
     # Since you have already extracted the features and dumped it using pickle
@@ -110,9 +144,11 @@ class RNN_Decoder(tf.keras.Model):
         self.fc1 = tf.keras.layers.Dense(self.units)
         self.fc2 = tf.keras.layers.Dense(vocab_size)
 
+        self.attention = BahdanauAttention(self.units)
+
     def call(self, x, features, hidden):
         # defining attention as a separate model
-        # context_vector, attention_weights = self.attention(features, hidden)
+        context_vector, attention_weights = self.attention(features, hidden)
 
         # x shape after passing through embedding == (batch_size, 1, embedding_dim)
         x = self.embedding(x)
@@ -132,7 +168,7 @@ class RNN_Decoder(tf.keras.Model):
         # output shape == (batch_size * max_length, vocab)
         x = self.fc2(x)
 
-        return x, state
+        return x, state, attention_weights
 
     def reset_state(self, batch_size):
         return tf.zeros((batch_size, self.units))
@@ -237,7 +273,9 @@ def evaluate(image):
     result = []
 
     for i in range(max_length):
-        predictions, hidden = decoder(dec_input, features, hidden)
+        predictions, hidden, attention_weights = decoder(dec_input, features, hidden)
+
+        attention_plot[i] = tf.reshape(attention_weights, (-1, )).numpy()
 
         predicted_id = tf.random.categorical(predictions, 1)[0][0].numpy()
         result.append(tokenizer.index_word[predicted_id])
@@ -247,11 +285,31 @@ def evaluate(image):
 
         dec_input = tf.expand_dims([predicted_id], 0)
 
+    attention_plot = attention_plot[:len(result), :]
+
     return result
+
+def plot_attention(image, result, attention_plot):
+    temp_image = np.array(Image.open(image))
+
+    fig = plt.figure(figsize=(10, 10))
+
+    len_result = len(result)
+    for l in range(len_result):
+        temp_att = np.resize(attention_plot[l], (8, 8))
+        ax = fig.add_subplot(len_result//2, len_result//2, l+1)
+        ax.set_title(result[l])
+        img = ax.imshow(temp_image)
+        ax.imshow(temp_att, cmap='gray', alpha=0.6, extent=img.get_extent())
+
+    plt.tight_layout()
+    plt.show()
+
 
 results = list()
 image = 'surf.jpg'
-result = evaluate(image)
+result, attention_plot = evaluate(image)
 result.remove('<end>')
 print ('Prediction Caption:', ' '.join(result))
+plot_attention(image, result, attention_plot)
 Image.open(image)
