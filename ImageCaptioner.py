@@ -12,11 +12,16 @@ vocab_size = 4000
 max_length = 32
 attention_features_shape = 64
 
+train_captions = pd.read_pickle('train_captions.pkl')
+img_name_vector = pd.read_pickle('img_name_vector.pkl')
+test_imgs = pd.read_pickle('test_imgs.pkl')
+test_caps = pd.read_pickle('test_caps.pkl')
+
+
 image_model = tf.keras.applications.InceptionV3(include_top=False, weights='imagenet')
 new_input = image_model.input
 hidden_layer = image_model.layers[-1].output
 image_features_extract_model = tf.keras.Model(new_input, hidden_layer)
-tokenizer = pd.read_pickle('tokenizer.pkl')
 
 def load_image(image_path):
     img = tf.io.read_file(image_path)
@@ -24,6 +29,43 @@ def load_image(image_path):
     img = tf.image.resize(img, (224, 224))
     img = tf.keras.applications.inception_v3.preprocess_input(img)
     return img, image_path
+
+
+encode_train = sorted(set(img_name_vector))
+
+# Feel free to change batch_size according to your system configuration
+image_dataset = tf.data.Dataset.from_tensor_slices(encode_train)
+image_dataset = image_dataset.map(load_image, num_parallel_calls=tf.data.experimental.AUTOTUNE).batch(16)
+
+# Find the maximum length of any caption in our dataset
+def calc_max_length(tensor):
+    return max(len(t) for t in tensor)
+
+# Choose the top 4000 words from the vocabulary
+top_k = 4000
+tokenizer = tf.keras.preprocessing.text.Tokenizer(num_words=top_k,
+                                                  oov_token="<unk>",
+                                                  filters='!"#$%&()*+.,-/:;=?@[\]^_`{|}~ ')
+tokenizer.fit_on_texts(train_captions)
+train_seqs = tokenizer.texts_to_sequences(train_captions)
+
+tokenizer.word_index['<pad>'] = 0
+tokenizer.index_word[0] = '<pad>'
+
+# Create the tokenized vectors
+train_seqs = tokenizer.texts_to_sequences(train_captions)
+
+# Pad each vector to the max_length of the captions
+# If you do not provide a max_length value, pad_sequences calculates it automatically
+cap_vector = tf.keras.preprocessing.sequence.pad_sequences(train_seqs, padding='post')
+
+# Calculates the max_length, which is used to store the attention weights
+max_length = calc_max_length(train_seqs)
+
+img_name_train, img_name_val, cap_train, cap_val = train_test_split(img_name_vector,
+                                                                    cap_vector,
+                                                                    test_size=0.1,
+                                                                    random_state=0)
 
 
 class CNN_Encoder(tf.keras.Model):
