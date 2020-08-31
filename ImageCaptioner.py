@@ -6,12 +6,6 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
-embedding_dim = 256
-units = 256
-vocab_size = 4000
-max_length = 32
-attention_features_shape = 64
-
 train_captions = pd.read_pickle('train_captions.pkl')
 img_name_vector = pd.read_pickle('img_name_vector.pkl')
 test_imgs = pd.read_pickle('test_imgs.pkl')
@@ -66,6 +60,30 @@ img_name_train, img_name_val, cap_train, cap_val = train_test_split(img_name_vec
                                                                     cap_vector,
                                                                     test_size=0.1,
                                                                     random_state=0)
+BATCH_SIZE = 64
+BUFFER_SIZE = 1000
+embedding_dim = 256
+units = 256
+vocab_size = top_k + 1
+num_steps = len(img_name_train) // BATCH_SIZE
+# Shape of the vector extracted from InceptionV3 is (64, 2048)
+# These two variables represent that vector shape
+features_shape = 2048
+
+def map_func(img_name, cap):
+    img_tensor = np.load(img_name.decode('utf-8')+'.npy')
+    return img_tensor, cap
+
+dataset = tf.data.Dataset.from_tensor_slices((img_name_train, cap_train))
+
+# Use map to load the numpy files in parallel
+dataset = dataset.map(lambda item1, item2: tf.numpy_function(
+          map_func, [item1, item2], [tf.float32, tf.int32]),
+          num_parallel_calls=tf.data.experimental.AUTOTUNE)
+
+# Shuffle and batch
+dataset = dataset.shuffle(BUFFER_SIZE).batch(BATCH_SIZE)
+dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
 
 class CNN_Encoder(tf.keras.Model):
@@ -122,3 +140,75 @@ class RNN_Decoder(tf.keras.Model):
 
 encoder = CNN_Encoder(embedding_dim)
 decoder = RNN_Decoder(embedding_dim, units, vocab_size)
+
+optimizer = tf.keras.optimizers.Adam()
+loss_object = tf.keras.losses.SparseCategoricalCrossentropy(
+    from_logits=True, reduction='none')
+
+def loss_function(real, pred):
+    # print('loss func')
+    mask = tf.math.logical_not(tf.math.equal(real, 0))
+    loss_ = loss_object(real, pred)
+
+    mask = tf.cast(mask, dtype=loss_.dtype)
+    loss_ *= mask
+
+    return tf.reduce_mean(loss_)
+
+loss_plot = []
+
+@tf.function
+def train_step(img_tensor, target):
+  loss = 0
+
+  # initializing the hidden state for each batch
+  # because the captions are not related from image to image
+  hidden = decoder.reset_state(batch_size=target.shape[0])
+
+  dec_input = tf.expand_dims([tokenizer.word_index['<start>']] * target.shape[0], 1)
+
+  with tf.GradientTape() as tape:
+      features = encoder(img_tensor)
+
+      for i in range(1, target.shape[1]):
+          # passing the features through the decoder
+          predictions, hidden, _ = decoder(dec_input, features, hidden)
+
+          loss += loss_function(target[:, i], predictions)
+
+          # using teacher forcing
+          dec_input = tf.expand_dims(target[:, i], 1)
+
+  total_loss = (loss / int(target.shape[1]))
+
+  trainable_variables = encoder.trainable_variables + decoder.trainable_variables
+
+  gradients = tape.gradient(loss, trainable_variables)
+
+  optimizer.apply_gradients(zip(gradients, trainable_variables))
+
+  return loss, total_loss
+
+EPOCHS = 30
+
+for epoch in range(EPOCHS):
+    start = time.time()
+    total_loss = 0
+
+    for (batch, (img_tensor, target)) in tqdm(enumerate(dataset)):
+        batch_loss, t_loss = train_step(img_tensor, target)
+        total_loss += t_loss
+
+        if batch % 100 == 0:
+            print ('Epoch {} Batch {} Loss {:.4f}'.format(
+              epoch + 1, batch, batch_loss.numpy() / int(target.shape[1])))
+    # storing the epoch end loss value to plot later
+    loss_plot.append(total_loss / num_steps)
+
+    if epoch % 5 == 0:
+      ckpt_manager.save()
+
+    print ('Epoch {} Loss {:.6f}'.format(epoch + 1,
+                                         total_loss/num_steps))
+    print ('Time taken for 1 epoch {} sec\n'.format(time.time() - start))
+
