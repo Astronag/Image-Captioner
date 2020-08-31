@@ -35,8 +35,8 @@ image_dataset = image_dataset.map(load_image, num_parallel_calls=tf.data.experim
 def calc_max_length(tensor):
     return max(len(t) for t in tensor)
 
-# Choose the top 4000 words from the vocabulary
-top_k = 4000
+# Choose the top 5000 words from the vocabulary
+top_k = 5000
 tokenizer = tf.keras.preprocessing.text.Tokenizer(num_words=top_k,
                                                   oov_token="<unk>",
                                                   filters='!"#$%&()*+.,-/:;=?@[\]^_`{|}~ ')
@@ -63,7 +63,7 @@ img_name_train, img_name_val, cap_train, cap_val = train_test_split(img_name_vec
 BATCH_SIZE = 64
 BUFFER_SIZE = 1000
 embedding_dim = 256
-units = 256
+units = 512
 vocab_size = top_k + 1
 num_steps = len(img_name_train) // BATCH_SIZE
 # Shape of the vector extracted from InceptionV3 is (64, 2048)
