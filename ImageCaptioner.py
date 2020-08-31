@@ -250,7 +250,7 @@ def evaluate(image):
     return result
 
 results = list()
-image = '/content/drive/My Drive/Test/kid.png'
+image = 'surf.jpg'
 result = evaluate(image)
 result.remove('<end>')
 print ('Prediction Caption:', ' '.join(result))
